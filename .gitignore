@@ -1,0 +1,24 @@
+__pycache__/
+*.pyc
+.venv/
+node_modules/
+dist/
+.env
+.idea
+.vscode
+.DS_Store
+*.log
+backend/models/
+data/uploads/
+
+# --- hidden guide / AI-assist meta files ---
+PORTFOLIO.md
+HOW-TO-USE.md
+*HOW-TO*
+*HOWTO*
+*GUIDE*
+*guide*
+DEPLOY.md
+*.ai.md
+.cursor/
+.cursorrules
