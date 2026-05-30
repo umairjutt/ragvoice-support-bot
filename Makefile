@@ -1,4 +1,4 @@
-.PHONY: up down logs ingest eval test pull-models
+.PHONY: up down logs ingest eval eval-ci test lint pull-models
 
 up: ; docker compose up -d
 down: ; docker compose down -v
@@ -13,3 +13,12 @@ ingest:
 
 eval:
 	docker compose exec api python -m app.eval
+
+eval-ci:
+	cd backend && python -m app.eval --ci
+
+test:
+	cd backend && pytest
+
+lint:
+	cd backend && ruff check app tests && mypy app

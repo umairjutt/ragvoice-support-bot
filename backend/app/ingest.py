@@ -6,11 +6,11 @@ from pathlib import Path
 
 from langchain_community.document_loaders import PyPDFLoader, TextLoader, UnstructuredHTMLLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .db import Chunk, Document, Session, init_db
 from .ollama_client import embed
-
 
 SPLITTER = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=120, separators=["\n\n", "\n", ". ", " "])
 
@@ -45,6 +45,40 @@ async def ingest_file(path: Path, tenant: str, session: AsyncSession) -> int:
 
     await session.commit()
     return len(chunks)
+
+
+async def delete_document(document_id: int, tenant: str, session: AsyncSession) -> bool:
+    """Remove a document and its chunks. Returns False if not found in tenant."""
+    doc = (
+        await session.execute(
+            select(Document).where(Document.id == document_id, Document.tenant == tenant)
+        )
+    ).scalar_one_or_none()
+    if doc is None:
+        return False
+
+    await session.execute(delete(Chunk).where(Chunk.document_id == document_id))
+    await session.delete(doc)
+    await session.commit()
+    return True
+
+
+async def reindex_tenant(tenant: str, session: AsyncSession) -> dict:
+    """Re-embed every chunk for a tenant (e.g. after an embedding-model change)."""
+    rows = (
+        await session.execute(select(Chunk).where(Chunk.tenant == tenant))
+    ).scalars().all()
+
+    for chunk in rows:
+        chunk.embedding = await embed(chunk.text)
+
+    await session.commit()
+
+    n_docs = (
+        await session.execute(select(Document).where(Document.tenant == tenant))
+    ).scalars().all()
+
+    return {"documents": len(n_docs), "chunks": len(rows)}
 
 
 async def ingest_directory(root: str, tenant: str = "default") -> None:

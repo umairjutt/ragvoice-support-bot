@@ -8,12 +8,14 @@ services:
       - models_cache:/root/.cache
     environment:
       - DATABASE_URL=postgresql+asyncpg://app:secret@postgres:5432/rag
+      - REDIS_URL=redis://redis:6379/0
       - OLLAMA_URL=http://ollama:11434
       - LLM_MODEL=llama3.1:8b
       - EMBEDDING_MODEL=nomic-embed-text
       - PIPER_VOICE=en_US-amy-medium
     depends_on:
       postgres: {condition: service_healthy}
+      redis: {condition: service_started}
       ollama: {condition: service_started}
 
   frontend:
@@ -36,6 +38,11 @@ services:
       test: ["CMD-SHELL", "pg_isready -U app"]
       interval: 5s
       retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6381:6379"]
+    command: ["redis-server", "--appendonly", "no"]
 
   ollama:
     image: ollama/ollama:latest

@@ -4,23 +4,16 @@ The combination of dense (semantic) + sparse (lexical) retrieval consistently
 outperforms either alone on RAG benchmarks. RRF is a parameter-free fusion
 that just needs the rank position from each retriever, no score normalization.
 """
-from dataclasses import dataclass
-
 from sentence_transformers import CrossEncoder
 from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from . import cache, metrics
 from .config import settings
-from .ollama_client import embed
+from .models import Hit
+from .ollama_client import complete, embed
 
-
-@dataclass
-class Hit:
-    chunk_id: int
-    document_id: int
-    text: str
-    score: float
-
+__all__ = ["Hit", "hybrid_search", "dense_search", "sparse_search", "reciprocal_rank_fusion", "rerank"]
 
 _reranker: CrossEncoder | None = None
 
@@ -32,8 +25,41 @@ def get_reranker() -> CrossEncoder:
     return _reranker
 
 
+async def embed_cached(text_value: str) -> list[float]:
+    """Embed with a Redis read-through cache."""
+    cached = await cache.get_embedding(text_value)
+    if cached is not None:
+        return cached
+    vec = await embed(text_value)
+    await cache.set_embedding(text_value, vec)
+    return vec
+
+
+HYDE_PROMPT = """Write a short, factual paragraph that would directly answer the \
+following customer support question. Do not say you are unsure; write the ideal \
+answer as if from documentation.
+
+Question: {question}
+
+Hypothetical answer:"""
+
+
+async def hyde_expand(query: str) -> str:
+    """HyDE: generate a hypothetical answer and embed *that* to lift recall.
+
+    Returns the original query on any failure so retrieval never breaks.
+    """
+    if not settings.enable_hyde:
+        return query
+    try:
+        hypothetical = (await complete(HYDE_PROMPT.format(question=query), max_tokens=160)).strip()
+    except Exception:
+        return query
+    return f"{query}\n\n{hypothetical}" if hypothetical else query
+
+
 async def dense_search(session: AsyncSession, query: str, tenant: str, k: int) -> list[Hit]:
-    vec = await embed(query)
+    vec = await embed_cached(query)
     sql = text(
         """
         SELECT id, document_id, text, 1 - (embedding <=> :vec) AS score
@@ -81,7 +107,7 @@ def rerank(query: str, hits: list[Hit], top_n: int) -> list[Hit]:
         return []
     pairs = [(query, h.text) for h in hits]
     scores = get_reranker().predict(pairs).tolist()
-    scored = sorted(zip(hits, scores), key=lambda x: x[1], reverse=True)
+    scored = sorted(zip(hits, scores, strict=False), key=lambda x: x[1], reverse=True)
     out = []
     for hit, score in scored[:top_n]:
         hit.score = float(score)
@@ -90,7 +116,13 @@ def rerank(query: str, hits: list[Hit], top_n: int) -> list[Hit]:
 
 
 async def hybrid_search(session: AsyncSession, query: str, tenant: str) -> list[Hit]:
-    dense = await dense_search(session, query, tenant, settings.top_k_dense)
-    sparse = await sparse_search(session, query, tenant, settings.top_k_sparse)
-    fused = reciprocal_rank_fusion(dense, sparse)[: settings.top_k_dense]
-    return rerank(query, fused, settings.top_k_rerank)
+    # HyDE expands the dense side only; BM25 + reranking use the literal query.
+    dense_query = await hyde_expand(query)
+
+    with metrics.timed("retrieval"):
+        dense = await dense_search(session, dense_query, tenant, settings.top_k_dense)
+        sparse = await sparse_search(session, query, tenant, settings.top_k_sparse)
+        fused = reciprocal_rank_fusion(dense, sparse)[: settings.top_k_dense]
+
+    with metrics.timed("rerank"):
+        return rerank(query, fused, settings.top_k_rerank)

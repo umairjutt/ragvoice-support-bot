@@ -1,5 +1,14 @@
 # RAG Voice + Text Support Bot (Flagship)
 
+[![CI](https://github.com/your-username/ragvoice-support-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/your-username/ragvoice-support-bot/actions/workflows/ci.yml)
+![Python 3.11](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)
+![Lint: ruff](https://img.shields.io/badge/lint-ruff-D7FF64)
+![Types: mypy](https://img.shields.io/badge/types-mypy-2A6DB2)
+![License: MIT](https://img.shields.io/badge/license-MIT-green)
+
+> Replace `your-username` in the badge URLs after you push the repo to GitHub.
+
 A production-grade Retrieval-Augmented-Generation customer support bot. **Voice-in, voice-out, text-in, text-out, with citations.** Runs **100% locally — no API keys needed** to demo.
 
 [Live demo (TODO)](https://example.com) · [Video walkthrough (TODO)](https://example.com)
@@ -9,13 +18,19 @@ Most RAG demos on GitHub are notebooks. This one is a deployable product with hy
 ## What this demonstrates
 
 - **Hybrid retrieval** — dense (pgvector cosine) + sparse (BM25 via Postgres `tsvector`) fused with **Reciprocal Rank Fusion**
+- **HyDE query expansion** — a hypothetical answer is generated and embedded to lift dense recall
 - **Cross-encoder reranking** (`BAAI/bge-reranker-base`) on top-20 → top-5
+- **Conversation memory + follow-up rewriting** — a "condense question" LLM step resolves pronoun-laden follow-ups against session history (`app/memory.py`)
+- **Grounding guardrail** — answers are scored against retrieved context; ungrounded answers are flagged and never cached (`app/chat.py`)
+- **Answer + embedding caching** in Redis, with hit/miss counters surfaced at `/metrics`
 - **Streaming responses** via WebSocket (token-by-token via Ollama streaming API)
 - **Citations** in every answer — clickable source doc + chunk
 - **Voice round-trip** — Whisper STT (`faster-whisper`) + Piper TTS (open-source neural TTS)
 - **Multi-tenant** — each "company" has an isolated knowledge base
-- **Doc ingestion pipeline** — PDF, HTML, Markdown via LangChain splitters
-- **Eval harness** — RAGAS metrics on a seeded Q&A set (`make eval`)
+- **Doc ingestion + admin** — PDF/HTML/Markdown via LangChain splitters; list/delete docs and trigger reindex
+- **Real eval harness** — context precision/recall, faithfulness, and answer-contains on a seeded gold set; runs **offline in CI** (`python -m app.eval --ci`) and gates on thresholds
+- **Observability** — per-stage latency (retrieval/rerank/LLM) + token counters at `/metrics`
+- **Quality gates** — ruff + mypy + pytest (fake Ollama client) in CI
 - **100% local** — Docker Compose pulls Ollama + Llama 3.1 8B on first run
 - **Modern React UI** — chat with mic button, waveform, source cards
 
@@ -77,12 +92,16 @@ Sample docs (Stripe API docs excerpts) are loaded by default so you can ask:
 
 ## API
 
-| Method | Path                       | Description                          |
-|--------|----------------------------|--------------------------------------|
-| WS     | `/ws/chat?tenant=acme`     | Streaming chat (text + audio)        |
-| POST   | `/api/ingest`              | Upload a doc to a tenant's KB        |
-| GET    | `/api/sources?tenant=acme` | List ingested docs                   |
-| POST   | `/api/eval`                | Run RAGAS eval (returns scores)      |
+| Method | Path                                | Description                          |
+|--------|-------------------------------------|--------------------------------------|
+| WS     | `/ws/chat?tenant=acme&session_id=…` | Streaming chat (text + audio) with memory |
+| POST   | `/api/ingest`                       | Upload a doc to a tenant's KB        |
+| GET    | `/api/sources?tenant=acme`          | List ingested docs                   |
+| DELETE | `/api/documents/{id}?tenant=acme`   | Delete a doc and its chunks          |
+| POST   | `/api/admin/reindex?tenant=acme`    | Re-embed a tenant's chunks           |
+| GET    | `/metrics`                          | JSON latency/token/cache metrics     |
+| GET    | `/metrics/prometheus`               | Prometheus exposition                |
+| GET    | `/docs`                             | OpenAPI / Swagger UI                 |
 
 ## WebSocket protocol
 
@@ -95,31 +114,42 @@ Client -> server:
 
 Server -> client:
 ```json
+{ "type": "rewrite", "original": "what about refunds?", "rewritten": "How do I issue a refund?" }
+{ "type": "citations", "items": [ {"index": 1, "document_id": 3, "chunk_id": 12, "text": "...", "score": 0.91} ] }
 { "type": "token", "text": "To" }                       // streamed
-{ "type": "citations", "items": [ {"doc": "...", "chunk": "..."} ] }
+{ "type": "grounding", "grounded": true, "overlap": 0.42 }
 { "type": "tts_audio", "data": "<base64 wav>" }
 { "type": "done" }
 ```
 
 ## Key implementation highlights
 
-- **Hybrid retrieval + RRF**: [backend/app/retrieval.py](backend/app/retrieval.py)
-- **WebSocket streaming with Ollama**: [backend/app/chat.py](backend/app/chat.py)
-- **Ingestion pipeline (semantic chunking)**: [backend/app/ingest.py](backend/app/ingest.py)
+- **Hybrid retrieval + RRF + HyDE**: [backend/app/retrieval.py](backend/app/retrieval.py)
+- **WebSocket streaming + grounding guardrail**: [backend/app/chat.py](backend/app/chat.py)
+- **Conversation memory + question condensing**: [backend/app/memory.py](backend/app/memory.py)
+- **Redis answer/embedding cache**: [backend/app/cache.py](backend/app/cache.py)
+- **Ingestion + admin (delete/reindex)**: [backend/app/ingest.py](backend/app/ingest.py)
 - **Evaluation harness**: [backend/app/eval.py](backend/app/eval.py)
+- **Metrics**: [backend/app/metrics.py](backend/app/metrics.py)
 
 ## Evaluation
 
-`make eval` runs a small held-out Q&A set against the bot and prints RAGAS scores:
+Two modes:
 
-| Metric              | Score |
-|---------------------|------:|
-| Faithfulness        |  TODO |
-| Answer Relevance    |  TODO |
-| Context Precision   |  TODO |
-| Context Recall      |  TODO |
+```bash
+make eval            # live: scores the gold set against the running bot
+make eval-ci         # offline: deterministic stub corpus, gates on thresholds, writes eval_report.json
+```
 
-(Scores recompute on every CI run.)
+The offline mode runs in CI on every push so the metric math stays honest
+without needing Postgres/Ollama. Metrics computed:
+
+| Metric              | Meaning                                                    | CI gate |
+|---------------------|------------------------------------------------------------|--------:|
+| Context Recall      | gold-relevant chunk present in retrieved set               | ≥ 0.99 |
+| Context Precision   | fraction of retrieved chunks that are relevant             | ≥ 0.30 |
+| Faithfulness        | answer terms supported by retrieved context (grounding)    | ≥ 0.40 |
+| Answer Contains     | gold keyword present in the answer                         | ≥ 0.99 |
 
 ## Roadmap
 

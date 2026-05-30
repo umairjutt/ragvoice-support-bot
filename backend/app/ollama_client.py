@@ -1,6 +1,6 @@
 """Thin async wrapper for the Ollama REST API."""
 import json
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 import httpx
 
@@ -19,6 +19,20 @@ async def embed(text: str) -> list[float]:
 
 async def embed_batch(texts: list[str]) -> list[list[float]]:
     return [await embed(t) for t in texts]
+
+
+async def complete(prompt: str, max_tokens: int = 256, temperature: float = 0.0) -> str:
+    """One-shot, non-streaming generation. Used for query rewriting + HyDE."""
+    payload = {
+        "model": settings.llm_model,
+        "prompt": prompt,
+        "stream": False,
+        "options": {"temperature": temperature, "num_predict": max_tokens, "num_ctx": 4096},
+    }
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        r = await client.post(f"{settings.ollama_url}/api/generate", json=payload)
+        r.raise_for_status()
+        return r.json().get("response", "")
 
 
 async def stream_chat(prompt: str) -> AsyncIterator[str]:

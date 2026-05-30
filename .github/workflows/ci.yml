@@ -5,7 +5,27 @@ on:
   pull_request: { branches: [main] }
 
 jobs:
-  build:
+  backend:
+    name: Backend (ruff + mypy + pytest)
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11', cache: 'pip' }
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+      - name: Lint (ruff)
+        run: ruff check app tests
+      - name: Type check (mypy)
+        run: mypy app
+      - name: Tests (pytest)
+        run: pytest
+      - name: Eval gate (offline gold set)
+        run: python -m app.eval --ci
+
+  images:
+    name: Docker images build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

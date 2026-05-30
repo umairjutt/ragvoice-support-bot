@@ -10,6 +10,10 @@ dist/
 *.log
 backend/models/
 data/uploads/
+eval_report.json
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 # --- hidden guide / AI-assist meta files ---
 PORTFOLIO.md
