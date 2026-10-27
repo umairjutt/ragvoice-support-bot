@@ -1,34 +1,32 @@
-# RAG Voice + Text Support Bot (Flagship)
+# RAG Voice + Text Support Bot
 
-[![CI](https://github.com/your-username/ragvoice-support-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/your-username/ragvoice-support-bot/actions/workflows/ci.yml)
+[CI results](https://github.com/umairjutt/ragvoice-support-bot/actions) · [Engineering guide](PORTFOLIO.md)
+
+> **Status:** Experimental local RAG application. Dependency installation, authenticated tenant access, upload boundaries and voice-model provisioning need further work before multi-user deployment.
+
+[![CI](https://github.com/umairjutt/ragvoice-support-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/umairjutt/ragvoice-support-bot/actions/workflows/ci.yml)
 ![Python 3.11](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)
-![Lint: ruff](https://img.shields.io/badge/lint-ruff-D7FF64)
-![Types: mypy](https://img.shields.io/badge/types-mypy-2A6DB2)
 ![License: MIT](https://img.shields.io/badge/license-MIT-green)
 
-> Replace `your-username` in the badge URLs after you push the repo to GitHub.
+An experimental retrieval-augmented support assistant with streamed text, source references and voice integration. Local inference uses Ollama; initial setup downloads models and requires appropriate hardware.
 
-A production-grade Retrieval-Augmented-Generation customer support bot. **Voice-in, voice-out, text-in, text-out, with citations.** Runs **100% locally — no API keys needed** to demo.
-
-[Live demo (TODO)](https://example.com) · [Video walkthrough (TODO)](https://example.com)
-
-Most RAG demos on GitHub are notebooks. This one is a deployable product with hybrid retrieval, reranking, streaming, evaluation, and a real chat UI.
+The project explores how retrieval, conversation memory, caching and streamed responses fit together in an application.
 
 ## What this demonstrates
 
-- **Hybrid retrieval** — dense (pgvector cosine) + sparse (BM25 via Postgres `tsvector`) fused with **Reciprocal Rank Fusion**
+- **Hybrid retrieval** — dense (pgvector cosine) + sparse (PostgreSQL full-text ranking with `ts_rank`) fused with **Reciprocal Rank Fusion**
 - **HyDE query expansion** — a hypothetical answer is generated and embedded to lift dense recall
 - **Cross-encoder reranking** (`BAAI/bge-reranker-base`) on top-20 → top-5
 - **Conversation memory + follow-up rewriting** — a "condense question" LLM step resolves pronoun-laden follow-ups against session history (`app/memory.py`)
-- **Grounding guardrail** — answers are scored against retrieved context; ungrounded answers are flagged and never cached (`app/chat.py`)
+- **Grounding heuristic** — answers are scored against retrieved context; ungrounded answers are flagged and never cached (`app/chat.py`)
 - **Answer + embedding caching** in Redis, with hit/miss counters surfaced at `/metrics`
 - **Streaming responses** via WebSocket (token-by-token via Ollama streaming API)
 - **Citations** in every answer — clickable source doc + chunk
 - **Voice round-trip** — Whisper STT (`faster-whisper`) + Piper TTS (open-source neural TTS)
-- **Multi-tenant** — each "company" has an isolated knowledge base
+- **Tenant-filtered retrieval** — queries filter by a supplied tenant; authenticated tenant authorization remains
 - **Doc ingestion + admin** — PDF/HTML/Markdown via LangChain splitters; list/delete docs and trigger reindex
-- **Real eval harness** — context precision/recall, faithfulness, and answer-contains on a seeded gold set; runs **offline in CI** (`python -m app.eval --ci`) and gates on thresholds
+- **Evaluation harness** — context precision/recall, faithfulness, and answer-contains on a seeded gold set; runs **offline in CI** (`python -m app.eval --ci`) and gates on thresholds
 - **Observability** — per-stage latency (retrieval/rerank/LLM) + token counters at `/metrics`
 - **Quality gates** — ruff + mypy + pytest (fake Ollama client) in CI
 - **100% local** — Docker Compose pulls Ollama + Llama 3.1 8B on first run
@@ -75,7 +73,7 @@ flowchart LR
 ## Quick start
 
 ```bash
-git clone <repo>
+git clone https://github.com/umairjutt/ragvoice-support-bot.git
 cd ragvoice-support-bot
 docker compose up -d
 # First run: Ollama auto-pulls llama3.1:8b (~5GB) and nomic-embed-text (~250MB)
@@ -141,8 +139,7 @@ make eval            # live: scores the gold set against the running bot
 make eval-ci         # offline: deterministic stub corpus, gates on thresholds, writes eval_report.json
 ```
 
-The offline mode runs in CI on every push so the metric math stays honest
-without needing Postgres/Ollama. Metrics computed:
+Offline mode validates the harness using a deterministic stub and a small gold set; it does not measure actual model quality. CI is configured to run it after dependency and code checks succeed. Metrics computed:
 
 | Metric              | Meaning                                                    | CI gate |
 |---------------------|------------------------------------------------------------|--------:|
@@ -157,7 +154,7 @@ without needing Postgres/Ollama. Metrics computed:
 - Conversation memory across sessions
 - Auto-rewriting follow-up queries with conversation context
 - Cost guardrails (token quota per tenant)
-- GPU compose override for 10x faster inference
+- GPU Compose configuration and measured hardware-specific inference results
 
 <!-- ownership:author -->
 ---
@@ -166,4 +163,4 @@ without needing Postgres/Ollama. Metrics computed:
 
 **Umair** &mdash; [@umairjutt](https://github.com/umairjutt)
 
-Designed, built and maintained by me. Licensed under the [MIT License](LICENSE).
+Maintained by [Umair Jutt](https://github.com/umairjutt). See [LICENSE](LICENSE) for repository licensing.
